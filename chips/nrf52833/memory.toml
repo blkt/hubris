@@ -1,0 +1,22 @@
+[[flash]]
+address = 0x00000000
+size = 0x80000 # 512 kiB
+read = true
+execute = true
+
+[[ram]]
+address = 0x20000000
+size = 0x20000 # 128 kiB
+read = true
+write = true
+execute = false
+
+#####
+
+# [[sram1]]
+# address = 0x30010000
+# size = 0x10000
+# read = true
+# write = true
+# execute = false
+# dma = true

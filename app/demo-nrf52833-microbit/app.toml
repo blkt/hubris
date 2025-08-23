@@ -1,0 +1,33 @@
+name = "demo-nrf52833-microbit"
+target = "thumbv7em-none-eabihf"
+board = "nrf52833-microbit"
+chip = "../../chips/nrf52833"
+stacksize = 896
+
+[kernel]
+name = "demo-nrf52833-microbit"
+requires = {flash = 20000, ram = 3072}
+# features = ["nrf52833"]
+
+[tasks.jefe]
+name = "task-jefe"
+priority = 0
+max-sizes = {flash = 8192, ram = 2048}
+start = true
+stacksize = 1536
+notifications = ["fault", "timer"]
+
+[tasks.hiffy]
+name = "task-hiffy"
+priority = 3
+max-sizes = {flash = 16384, ram = 16384 }
+stacksize = 2048
+start = true
+
+[tasks.idle]
+name = "task-idle"
+priority = 5
+max-sizes = {flash = 128, ram = 256}
+stacksize = 256
+start = true
+# features = ["insomniac"]
