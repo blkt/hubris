@@ -20,3 +20,10 @@ execute = false
 # write = true
 # execute = false
 # dma = true
+
+[[leds]]
+address = 0x50000000
+size = 0x1000
+read = true
+write = true
+execute = false

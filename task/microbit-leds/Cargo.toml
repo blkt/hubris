@@ -1,0 +1,17 @@
+[package]
+name = "task-microbit-leds"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+userlib = { path = "../../sys/userlib", features = ["panic-messages"] }
+cortex-m = { workspace = true }
+
+[[bin]]
+name = "task-microbit-leds"
+test = false
+doctest = false
+bench = false
+
+[lints]
+workspace = true

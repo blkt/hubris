@@ -31,3 +31,11 @@ max-sizes = {flash = 128, ram = 256}
 stacksize = 256
 start = true
 # features = ["insomniac"]
+
+[tasks.leds]
+name = "task-microbit-leds"
+priority = 4
+max-sizes = {flash = 256, ram = 256}
+stacksize = 256
+start = true
+extern-regions = [ "leds" ]
