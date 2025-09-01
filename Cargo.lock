@@ -5651,6 +5651,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "task-microbit-leds"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "userlib",
+]
+
+[[package]]
 name = "task-monorail-server"
 version = "0.1.0"
 dependencies = [

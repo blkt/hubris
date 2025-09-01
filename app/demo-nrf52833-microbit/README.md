@@ -241,3 +241,183 @@ new board. Being able to do it with Hubris feels empowering!
 Next step is writing tasks to control the board's LEDs so that I can
 then port the very simple tutorial programs from the micro:bit
 foundation to Hubris.
+
+
+## 2025-08-31
+
+Today I tried porting blinky, the standard "Hello World" program for
+embedded systems, to the micro:bit board running Hubris.
+
+During the time between this and the previous entry I ran into a very
+nice youtube channel named "The Rusty Bits" and watched a video
+explaining how to blink an led starting with raw pointers and then
+improving the code to use PAC and eventually HAL, with the final
+"bonus" section explaining the use of the less common Board Support
+Package (BSP). [Here](https://www.youtube.com/watch?v=A9wvA_S6m7Y) is
+the video.
+
+My first thought was to just try copy/pasting the implementation using
+raw pointers which is ugly, but easy to follow, and does not require
+additional dependencies, although I acknowledge that I am already
+importing the `nrf52833-pac` at this point.
+
+### Bathing in unsafe Rust
+
+At this point I knew I had to write a new task, and I decided I would
+start with just raw pointers and volatile writes, so I copied the
+`idle` task and made some changes.
+
+The resulting code is committed and I won't reproduce it here, but
+it's worth mentioning that I explicitly decided to NOT touch the
+chip's `memory.toml` file, expecting to run into some memory
+fault.
+
+I was please to indeed run into a memory fault!
+
+```
+cargo xtask humility app/demo-nrf52833-microbit/app.toml -- tasks -ls
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/xtask humility app/demo-nrf52833-microbit/app.toml -- tasks -ls`
+humility: attached via CMSIS-DAP
+system time = 5075303
+ID TASK                       GEN PRI STATE
+ 0 jefe                         0   0 recv, notif: fault timer(T+19)
+   stack unwind failed: Do not have unwind info for the given address.
+ 1 hiffy                        0   3 notif: bit31(T+170)
+   stack unwind failed: Do not have unwind info for the given address.
+ 2 idle                         0   5 RUNNING
+   |
+   +--->  0x20000d00 0x00004e74 main
+                     @ /hubris/task/idle/src/main.rs:28:13
+
+ 3 leds                    103577   4 FAULT: mem fault (precise: 0x50000754) in task code (was: ready)
+   |
+   +--->  0x20000e00 0x00004edc core::ptr::write_volatile
+                     @ /rustc/0d9592026226f5a667a0da60c13b955e0b486a07/library/core/src/ptr/mod.rs:2180:9
+          0x20000e00 0x00004edc main
+                     @ /hubris/task/microbit-leds/src/main.rs:24:6
+```
+
+Specifically, line 24 of the task is a `core::ptr::volatile_write` at
+address `0x50000754`.
+
+I expected I had to modify the `memory.toml` file to configure access
+to the slice of memory dedicated to at least leds.
+
+I had no idea what `dma = true` meant, so I only added RW permissions.
+Again, by looking at the `stm32` demo application I noticed the "link"
+between the `memory.toml` file and the `app.toml` one in the form of
+`extern-regions`, which defines which task has access to which memory
+region, at least in my understanding. This also clarified that, apart
+from the `flash` and `ram` "magic words", all the others were
+arbitrary, allowing me to define a new memory region for a little over
+4 kB, only what was necessary to be able to read and write from the
+two memory locations needed to make the led on the upper left corner
+blink.
+
+```toml
+[[leds]]
+address = 0x50000000
+size = 0x1000
+read = true
+write = true
+execute = false
+```
+
+I was amazed to see that the led turned on... but did not turn
+of. I've been generous with memory range to which I granted write
+access to the new task and did not expect this to be a memory fault,
+but I wanted to verify it
+
+```
+$ cargo xtask humility app/demo-nrf52833-microbit/app.toml -- tasks -ls leds
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/xtask humility app/demo-nrf52833-microbit/app.toml -- tasks -ls leds`
+humility: attached via CMSIS-DAP
+system time = 52401777
+ID TASK                       GEN PRI STATE
+ 3 leds                         0   4 RUNNING
+   |
+   +--->  0x20000e00 0x00004ef0 <core::ops::range::Range<T> as core::iter::range::RangeIteratorImpl>::spec_next
+                     @ /rustc/0d9592026226f5a667a0da60c13b955e0b486a07/library/core/src/iter/range.rs:765:12
+          0x20000e00 0x00004ef0 core::iter::range::<impl core::iter::traits::iterator::Iterator for core::ops::range::Range<A>>::next
+                     @ /rustc/0d9592026226f5a667a0da60c13b955e0b486a07/library/core/src/iter/range.rs:850:14
+          0x20000e00 0x00004ef0 main
+                     @ /hubris/task/microbit-leds/src/main.rs:37:15
+```
+
+The program was running without any memory issue, and it is so
+straightforward that the problem could not be any sort of
+memory-related poltergeist, so I bumped the counter of the `nop` loop
+from `400_000` to `100_000`. It turns out the led was indeed blinking,
+but the initial speed was way too high, and decreasing it made the
+blinking barely visible.
+
+This is an interesting difference from the video I was following from
+The Rusty Bits where the led was blinking at roughly 1 Hz. In my
+previous session, I set the tick divisor passed to `start_kernel` to
+an arbitrary 8000 and reducing it to 500 changed the speed at which
+the led was blinking, which was reassuring, but it's pretty much clear
+that the issue is the busy loop. Also, the advertised CPU frequency
+for the nrf52833 is 64 MHz.
+
+Next step is trying to get the led to blink at one actual Hertz or as
+close as possible to it.
+
+## 2025-09-01
+
+To the best of my knowledge, Hubris is a micro-kernel inspired by
+MINIX, so the natural follow up would be trying out the task
+communication primitives.
+
+I liked the idea of having a task controlling the leds only, so I did
+not touch the code written so far and focused instead on writing a
+task having access to a timer. It was time to use a PAC.
+
+### (Not so) Brief detour to `nrf-pacs`
+
+Blinking an LED by dereferencing pointers was simple enough, but I was
+not expecting to be able to do much more work without any abstraction,
+so I went back to read about `nrf-pacs`. The project seemed simple
+enough so I checked out the source and read its `Cargo.toml` file and
+the `xtask` code.
+
+There are three `cargo xtask` subcommands, `generate`, `build`, and
+`publish`, all of them fairly self explaining given that PACs are
+generated from SVD files. The `generate` command uses `svd2rust` to
+transform SVD files into Rust code. I'm not extremely familiar with
+SVD files, but, thanks again to The Rusty Bits, I learned that it's a
+standard format defined by ARM used to specify the various details
+pertaining a board. The second one, `build` builds the generated
+sources, ensuring the rest of the configuration (e.g. the target
+architecture) makes sense. The last one publishes to
+[crates.io](https://crates.io).
+
+Overall, the project seems a bit stagnating, and despite having very
+few dependencies, some of them could use an update.
+
+As it's the case for most other PAC repositories, there's an `svds/`
+folder containing a collection of huge XML files provided by
+manufacturers. These files, as one might expect, must be updated
+regularly, which is a manual process, and the last few updates were
+targeted to specific boards.
+
+I googled the latest SVD files and managed to find a single zip file
+with all of them, so I blindly replaced the contents of the `svds`
+files with the downloaded ones. After fixing newlines a bit, I tried
+building them and ran into an issue with the access specification
+being mispelled `read-writeonce` instead of `read-writeOnce`, which
+you can read more about
+[here](https://github.com/rust-embedded/svd2rust/issues/91#issuecomment-303558806)
+and was an easy fix.
+
+SVDs were up to date.
+
+After that I checked the few dependencies and bumped only `cortex-m`
+by a couple minors and, most importantly, `svd2rust` from `0.25.1` to
+`0.37.0`, which was a big jump! Yet, after doing that the whole build
+process worked with some warnings about `critical-section` feature not
+being defined,
+
+I only had to give it a try on my micro:bit before opening a pull
+request.
